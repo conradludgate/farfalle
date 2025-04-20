@@ -1,0 +1,16 @@
+[package]
+name = "farfalle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hybrid-array = "0.3.0"
+crypto-common = { version = "0.2.0-rc.2", git = "https://github.com/RustCrypto/traits/" }
+# block-buffer = { version = "0.11.0-rc.4", git = "https://github.com/RustCrypto/utils/" }
+inout = { version = "0.2.0-rc.4", git = "https://github.com/RustCrypto/utils/" }
+subtle = "2"
+digest = { version = "0.11.0-pre.10", features = ["mac"], git = "https://github.com/RustCrypto/traits/" }
+
+[patch.crates-io]
+# block-buffer = { version = "0.11.0-rc.4", git = "https://github.com/RustCrypto/utils/" }
+
