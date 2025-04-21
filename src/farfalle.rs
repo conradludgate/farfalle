@@ -1,159 +1,79 @@
-use std::marker::PhantomData;
-
 use digest::block_buffer::Eager;
 use digest::core_api::{BufferKindUser, ExtendableOutputCore, UpdateCore, XofReaderCore};
-use digest::crypto_common::{BlockSizeUser, BlockSizes, KeyInit, KeySizeUser};
-use hybrid_array::{Array, ArraySize};
+use digest::crypto_common::{BlockSizeUser, BlockSizes};
+use digest::typenum::Unsigned;
+use hybrid_array::Array;
 use inout::InOut;
 
 use crate::Permutation;
+use crate::deck::{DeckCore, Pad1X};
 
-pub struct Farfalle<Pb, Pc, Pd, Pe, Rc, Re, B, K>
-where
-    Pb: Permutation<Size = B>,
-    Pc: Permutation<Size = B>,
-    Pd: Permutation<Size = B>,
-    Pe: Permutation<Size = B>,
-    Rc: Permutation<Size = B>,
-    Re: Permutation<Size = B>,
-    B: ArraySize,
-    K: ArraySize,
-{
-    /// permutation for deriving the initial mask from the key K.
-    _pb: PhantomData<(Pb, K)>,
-    /// permutation for the compression layer
-    pc: Pc,
-    /// permutation between the compression layer and the expansion layer
-    pd: Pd,
-    /// permutation for the expansion layer
-    pe: Pe,
+/// Definition of a farfalle construction.
+///
+/// It consists of 4 cryptographic permutations, and 2 rolling functions,
+/// both with the same block size state.
+///
+/// The 4 permutation functions are security sensitive, although they can all be
+/// identical.
+///
+/// The roll functions are also permutations, but are generally a lot
+/// more lightweight than the other 4 cryptographic permutations.
+///
+/// See the paper on Farfalle for security details, specifically section 5.
+/// <https://tosc.iacr.org/index.php/ToSC/article/view/855>
+pub trait FarfalleCore {
+    type StateSize: BlockSizes;
 
-    /// rolling function for generating masks for the compression layer
-    rollc: Rc,
-    /// rolling function to update state for the expansion layer
-    rolle: Re,
+    /// Permutation function used for deriving the initial mask from the key
+    type Pb: Permutation<Size = Self::StateSize>;
+    /// Permutation function used in the compression layer
+    type Pc: Permutation<Size = Self::StateSize>;
+    /// Permutation function used between compression and expansion
+    type Pd: Permutation<Size = Self::StateSize>;
+    /// Permutation function used in the expansion layer
+    type Pe: Permutation<Size = Self::StateSize>;
 
-    /// keymask
-    k: Array<u8, B>,
-    // k_: Array<u8, B>,
+    /// Rolling function used for generating masks that are added to the input blocks in the compression layer
+    type Rc: Permutation<Size = Self::StateSize>;
+    /// Rolling function used to update the internal state during expansion
+    type Re: Permutation<Size = Self::StateSize>;
+}
+
+pub struct Farfalle<Core: FarfalleCore> {
+    /// input keymask
+    k: Array<u8, Core::StateSize>,
     /// input state
-    x: Array<u8, B>,
-    // /// output state
-    // y: Array<u8, B>,
+    x: Array<u8, Core::StateSize>,
 }
 
-impl<Pb, Pc, Pd, Pe, Rc, Re, B, K> KeySizeUser for Farfalle<Pb, Pc, Pd, Pe, Rc, Re, B, K>
-where
-    Pb: Permutation<Size = B> + Default,
-    Pc: Permutation<Size = B> + Default,
-    Pd: Permutation<Size = B> + Default,
-    Pe: Permutation<Size = B> + Default + Clone,
-    Rc: Permutation<Size = B> + Default,
-    Re: Permutation<Size = B> + Default + Clone,
-    B: BlockSizes,
-    K: ArraySize,
-{
-    type KeySize = K;
-}
-
-impl<Pb, Pc, Pd, Pe, Rc, Re, B, K> KeyInit for Farfalle<Pb, Pc, Pd, Pe, Rc, Re, B, K>
-where
-    Pb: Permutation<Size = B> + Default,
-    Pc: Permutation<Size = B> + Default,
-    Pd: Permutation<Size = B> + Default,
-    Pe: Permutation<Size = B> + Default + Clone,
-    Rc: Permutation<Size = B> + Default,
-    Re: Permutation<Size = B> + Default + Clone,
-    B: BlockSizes,
-    K: ArraySize,
-{
-    fn new(key: &digest::Key<Self>) -> Self {
-        assert!(K::USIZE < B::USIZE);
-
-        let pb = Pb::default();
-        let mut k = Array::<u8, B>::default();
-        k[..key.len()].copy_from_slice(key);
-        k[key.len()] = 0x80;
-        pb.permute(&mut k);
-
-        let x = Array::default();
-
-        let pd = Pd::default();
-        let mut y = x.clone();
-        pd.permute(&mut y);
-
+impl<Core: FarfalleCore> Clone for Farfalle<Core> {
+    fn clone(&self) -> Self {
         Self {
-            _pb: PhantomData,
-            pc: Default::default(),
-            pd,
-            pe: Default::default(),
-            rollc: Default::default(),
-            rolle: Default::default(),
-            k,
-            x,
+            k: self.k.clone(),
+            x: self.x.clone(),
         }
     }
 }
 
-impl<Pb, Pc, Pd, Pe, Rc, Re, B, K> BlockSizeUser for Farfalle<Pb, Pc, Pd, Pe, Rc, Re, B, K>
-where
-    Pb: Permutation<Size = B> + Default,
-    Pc: Permutation<Size = B> + Default,
-    Pd: Permutation<Size = B> + Default,
-    Pe: Permutation<Size = B> + Default + Clone,
-    Rc: Permutation<Size = B> + Default,
-    Re: Permutation<Size = B> + Default + Clone,
-    B: BlockSizes,
-    K: ArraySize,
-{
-    type BlockSize = B;
+impl<Core: FarfalleCore> BlockSizeUser for Farfalle<Core> {
+    type BlockSize = Core::StateSize;
 }
 
-impl<Pb, Pc, Pd, Pe, Rc, Re, B, K> BufferKindUser for Farfalle<Pb, Pc, Pd, Pe, Rc, Re, B, K>
-where
-    Pb: Permutation<Size = B> + Default,
-    Pc: Permutation<Size = B> + Default,
-    Pd: Permutation<Size = B> + Default,
-    Pe: Permutation<Size = B> + Default + Clone,
-    Rc: Permutation<Size = B> + Default,
-    Re: Permutation<Size = B> + Default + Clone,
-    B: BlockSizes,
-    K: ArraySize,
-{
+impl<Core: FarfalleCore> BufferKindUser for Farfalle<Core> {
     type BufferKind = Eager;
 }
 
-impl<Pb, Pc, Pd, Pe, Rc, Re, B, K> Farfalle<Pb, Pc, Pd, Pe, Rc, Re, B, K>
-where
-    Pb: Permutation<Size = B> + Default,
-    Pc: Permutation<Size = B> + Default,
-    Pd: Permutation<Size = B> + Default,
-    Pe: Permutation<Size = B> + Default + Clone,
-    Rc: Permutation<Size = B> + Default,
-    Re: Permutation<Size = B> + Default + Clone,
-    B: BlockSizes,
-    K: ArraySize,
-{
+impl<Core: FarfalleCore> Farfalle<Core> {
     fn update_block(&mut self, mut m: crypto_common::Block<Self>) {
         InOut::from(&mut m).xor_in2out(&self.k);
-        self.rollc.permute(&mut self.k);
+        Core::Rc::permute(&mut self.k);
 
-        self.pc.permute(&mut m);
+        Core::Pc::permute(&mut m);
         InOut::from(&mut self.x).xor_in2out(&m);
     }
 }
 
-impl<Pb, Pc, Pd, Pe, Rc, Re, B, K> UpdateCore for Farfalle<Pb, Pc, Pd, Pe, Rc, Re, B, K>
-where
-    Pb: Permutation<Size = B> + Default,
-    Pc: Permutation<Size = B> + Default,
-    Pd: Permutation<Size = B> + Default,
-    Pe: Permutation<Size = B> + Default + Clone,
-    Rc: Permutation<Size = B> + Default,
-    Re: Permutation<Size = B> + Default + Clone,
-    B: BlockSizes,
-    K: ArraySize,
-{
+impl<Core: FarfalleCore> UpdateCore for Farfalle<Core> {
     fn update_blocks(&mut self, blocks: &[crypto_common::Block<Self>]) {
         for m in blocks {
             self.update_block(m.clone());
@@ -161,18 +81,8 @@ where
     }
 }
 
-impl<Pb, Pc, Pd, Pe, Rc, Re, B, K> ExtendableOutputCore for Farfalle<Pb, Pc, Pd, Pe, Rc, Re, B, K>
-where
-    Pb: Permutation<Size = B> + Default,
-    Pc: Permutation<Size = B> + Default,
-    Pd: Permutation<Size = B> + Default,
-    Pe: Permutation<Size = B> + Default + Clone,
-    Rc: Permutation<Size = B> + Default,
-    Re: Permutation<Size = B> + Default + Clone,
-    B: BlockSizes,
-    K: ArraySize,
-{
-    type ReaderCore = FarfalleXofCore<Pe, Re, B>;
+impl<Core: FarfalleCore> ExtendableOutputCore for Farfalle<Core> {
+    type ReaderCore = FarfalleXofCore<Core>;
 
     fn finalize_xof_core(
         &mut self,
@@ -180,60 +90,70 @@ where
     ) -> Self::ReaderCore {
         let n = buffer.get_data().len();
         if n > 0 {
-            let mut m = Array::<u8, B>::default();
+            let mut m = Array::<u8, Core::StateSize>::default();
             m[..n].copy_from_slice(buffer.get_data());
             buffer.reset();
             m[n] = 0x80;
             self.update_block(m);
         }
 
-        self.rollc.permute(&mut self.k);
+        Core::Rc::permute(&mut self.k);
 
         let k = self.k.clone();
         let mut y = self.x.clone();
-        self.pd.permute(&mut y);
+        Core::Pd::permute(&mut y);
 
         FarfalleXofCore {
-            pe: self.pe.clone(),
-            rolle: self.rolle.clone(),
             k,
             y,
         }
     }
 }
 
-pub struct FarfalleXofCore<Pe, Re, B>
-where
-    Pe: Permutation<Size = B>,
-    Re: Permutation<Size = B>,
-    B: ArraySize,
-{
-    pe: Pe,
-    rolle: Re,
-    k: Array<u8, B>,
-    y: Array<u8, B>,
+pub struct FarfalleXofCore<Core: FarfalleCore> {
+    k: Array<u8, Core::StateSize>,
+    y: Array<u8, Core::StateSize>,
 }
 
-impl<Pe, Re, B> BlockSizeUser for FarfalleXofCore<Pe, Re, B>
-where
-    Pe: Permutation<Size = B>,
-    Re: Permutation<Size = B>,
-    B: BlockSizes,
-{
-    type BlockSize = B;
+impl<Core: FarfalleCore> Clone for FarfalleXofCore<Core> {
+    fn clone(&self) -> Self {
+        Self {
+            k: self.k.clone(),
+            y: self.y.clone(),
+        }
+    }
 }
 
-impl<Pe, Re, B> XofReaderCore for FarfalleXofCore<Pe, Re, B>
-where
-    Pe: Permutation<Size = B>,
-    Re: Permutation<Size = B>,
-    B: BlockSizes,
-{
+impl<Core: FarfalleCore> BlockSizeUser for FarfalleXofCore<Core> {
+    type BlockSize = Core::StateSize;
+}
+
+impl<Core: FarfalleCore> XofReaderCore for FarfalleXofCore<Core> {
     fn read_block(&mut self) -> crypto_common::Block<Self> {
         let mut b = self.y.clone();
-        self.pe.permute(&mut b);
+        Core::Pe::permute(&mut b);
         InOut::from(&mut b).xor_in2out(&self.k);
-        self.rolle.permute(&mut self.y);
+        Core::Re::permute(&mut self.y);
         b
+    }
+}
+
+impl<Core: FarfalleCore> DeckCore for Farfalle<Core> {
+    type Padding = Pad1X;
+
+    fn init(key: &[u8]) -> Self {
+        assert!(key.len() < <Core::StateSize as Unsigned>::USIZE);
+
+        let mut k = Array::<u8, Core::StateSize>::default();
+        k[..key.len()].copy_from_slice(key);
+        k[key.len()] = 0x80;
+        Core::Pb::permute(&mut k);
+
+        let x = Array::default();
+
+        Self {
+            k,
+            x,
+        }
     }
 }

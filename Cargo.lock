@@ -3,26 +3,44 @@
 version = 4
 
 [[package]]
+name = "aead"
+version = "0.6.0-rc.0"
+source = "git+https://github.com/RustCrypto/traits/#ba9dbacd95e51200b697ca6f7dfdfc200129b3d6"
+dependencies = [
+ "crypto-common",
+ "inout",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.11.0-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a229bfd78e4827c91b9b95784f69492c1b77c1ab75a45a8a037b139215086f94"
+source = "git+https://github.com/RustCrypto/utils/#1ed4ca42e09f24f3f2845911fcae37207d14b217"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "cipher"
+version = "0.5.0-pre.8"
+source = "git+https://github.com/RustCrypto/traits/#ba9dbacd95e51200b697ca6f7dfdfc200129b3d6"
+dependencies = [
+ "crypto-common",
+ "inout",
 ]
 
 [[package]]
 name = "crypto-common"
 version = "0.2.0-rc.2"
-source = "git+https://github.com/RustCrypto/traits/#2dc47f8d1461a2a7a22b68e2afafeb4b59e13420"
+source = "git+https://github.com/RustCrypto/traits/#ba9dbacd95e51200b697ca6f7dfdfc200129b3d6"
 dependencies = [
  "hybrid-array",
+ "rand_core",
 ]
 
 [[package]]
 name = "digest"
 version = "0.11.0-pre.10"
-source = "git+https://github.com/RustCrypto/traits/#2dc47f8d1461a2a7a22b68e2afafeb4b59e13420"
+source = "git+https://github.com/RustCrypto/traits/#ba9dbacd95e51200b697ca6f7dfdfc200129b3d6"
 dependencies = [
  "block-buffer",
  "crypto-common",
@@ -33,6 +51,8 @@ dependencies = [
 name = "farfalle"
 version = "0.1.0"
 dependencies = [
+ "aead",
+ "cipher",
  "crypto-common",
  "digest",
  "hybrid-array",
@@ -52,10 +72,16 @@ dependencies = [
 [[package]]
 name = "inout"
 version = "0.2.0-rc.4"
-source = "git+https://github.com/RustCrypto/utils/#f5834a783fc10f7747956bb0e432f03c011110eb"
+source = "git+https://github.com/RustCrypto/utils/#1ed4ca42e09f24f3f2845911fcae37207d14b217"
 dependencies = [
  "hybrid-array",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 
 [[package]]
 name = "subtle"

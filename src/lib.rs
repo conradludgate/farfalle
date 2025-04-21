@@ -1,27 +1,71 @@
 use hybrid_array::{Array, ArraySize};
+use inout::InOutBuf;
 
+pub mod core_api;
+pub mod dec;
 pub mod deck;
 pub mod farfalle;
 pub mod sane;
-pub mod xorbuffer;
+pub mod sanse;
+pub mod wbc;
 
 pub trait Permutation {
     type Size: ArraySize;
-    fn permute(&self, block: &mut Array<u8, Self::Size>);
+    fn permute(block: &mut Array<u8, Self::Size>);
+}
+
+/// Session-supporting authenticated encryption scheme
+pub trait SessionAead {
+    type Tag: ArraySize;
+
+    /// Encrypt the data in the provided [`InOutBuf`], returning the authentication tag.
+    /// This also moves the session state forward.
+    fn encrypt_inout_detached(
+        &mut self,
+        associated_data: &[u8],
+        buffer: InOutBuf<'_, '_, u8>,
+    ) -> Array<u8, Self::Tag>;
+
+    /// Decrypt the data in the provided [`InOutBuf`], returning an error in the event the
+    /// provided authentication tag is invalid for the given ciphertext (i.e. ciphertext
+    /// is modified/unauthentic)
+    ///
+    /// This also moves the session state forward, but must be discarded if there is a tag error.
+    fn decrypt_inout_detached(
+        &mut self,
+        associated_data: &[u8],
+        buffer: InOutBuf<'_, '_, u8>,
+        tag: &Array<u8, Self::Tag>,
+    ) -> aead::Result<()>;
 }
 
 #[cfg(test)]
 mod tests {
-    use crypto_common::KeyIvInit;
     use digest::consts::{U16, U32, U48};
-    use hybrid_array::Array;
     use inout::InOutBuf;
 
-    type Xoofff = Farfalle<Xoodoo<6>, Xoodoo<6>, Xoodoo<6>, Xoodoo<6>, RollXC, RollXE, U48, U32>;
+    use crate::{
+        Permutation, SessionAead,
+        farfalle::{Farfalle, FarfalleCore},
+        sane::{DeckSane, DeckSaneCore},
+    };
+
+    struct XoofffCore;
+    impl FarfalleCore for XoofffCore {
+        type StateSize = U48;
+        type Pb = Xoodoo<6>;
+        type Pc = Xoodoo<6>;
+        type Pd = Xoodoo<6>;
+        type Pe = Xoodoo<6>;
+        type Rc = RollXC;
+        type Re = RollXE;
+    }
+    type XoofffDeckCore = Farfalle<XoofffCore>;
+    // type XoofffDeck = crate::deck::CoreWrapper<XoofffDeckCore>;
+
     struct XoofffSaneCore;
     impl DeckSaneCore for XoofffSaneCore {
-        type Core = Xoofff;
-        type Nonce = U16;
+        type Core = XoofffDeckCore;
         type TagSize = U16;
         type Alignnemt = U32;
     }
@@ -30,10 +74,10 @@ mod tests {
 
     #[test]
     fn check() {
-        let key = Array([0; 32]);
-        let iv = Array([0; 16]);
-        let mut enc = XoofffSane::new(&key, &iv);
-        let mut dec = XoofffSane::new(&key, &iv);
+        let key = [0; 32];
+        let iv = [0; 16];
+        let mut enc = XoofffSane::init(&key, &iv);
+        let mut dec = XoofffSane::init(&key, &iv);
 
         let ad1 = *b"foo";
         let mut msg1 = *b"abcd";
@@ -50,19 +94,13 @@ mod tests {
         assert_eq!(msg2, *b"xyzw");
     }
 
-    use crate::{
-        Permutation,
-        farfalle::Farfalle,
-        sane::{DeckSane, DeckSaneCore, SessionAead},
-    };
-
     #[derive(Default, Clone, Copy)]
     struct Xoodoo<const R: usize> {}
 
     impl<const R: usize> Permutation for Xoodoo<R> {
         type Size = U48;
 
-        fn permute(&self, block: &mut hybrid_array::Array<u8, Self::Size>) {
+        fn permute(block: &mut hybrid_array::Array<u8, Self::Size>) {
             let mut b: [u32; 12] = unsafe { core::mem::transmute(block.clone()) };
             xoodoo::<R>(&mut b);
             *block = unsafe { core::mem::transmute(b) };
@@ -74,7 +112,7 @@ mod tests {
     impl Permutation for RollXC {
         type Size = U48;
 
-        fn permute(&self, block: &mut hybrid_array::Array<u8, Self::Size>) {
+        fn permute(block: &mut hybrid_array::Array<u8, Self::Size>) {
             let mut b: [u32; 12] = unsafe { core::mem::transmute(block.clone()) };
             rollxc(&mut b);
             *block = unsafe { core::mem::transmute(b) };
@@ -86,7 +124,7 @@ mod tests {
     impl Permutation for RollXE {
         type Size = U48;
 
-        fn permute(&self, block: &mut hybrid_array::Array<u8, Self::Size>) {
+        fn permute(block: &mut hybrid_array::Array<u8, Self::Size>) {
             let mut b: [u32; 12] = unsafe { core::mem::transmute(block.clone()) };
             rollxe(&mut b);
             *block = unsafe { core::mem::transmute(b) };
