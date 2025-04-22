@@ -32,7 +32,7 @@ pub struct DeckSane<D: DeckSaneCore> {
     d: D::Core,
     /// the state of the next keystream
     k: XofReaderW<D>,
-    /// u1 that is stored in bit 7 (0x40)
+    /// u1 that is stored in bit 1 (0x01)
     e: u8,
 }
 
@@ -83,7 +83,7 @@ impl<D: DeckSaneCore> SessionAead for DeckSane<D> {
         let ciphertext = buffer.into_out();
 
         let mut k = apply_ad_ct(&mut self.d, self.e, ad, ciphertext);
-        self.e ^= 0x40;
+        self.e ^= 0x01;
 
         let tag = Self::consume_tag_and_offset(&mut k);
 
@@ -102,7 +102,7 @@ impl<D: DeckSaneCore> SessionAead for DeckSane<D> {
         let ciphertext = buffer.get_in();
 
         let mut k = apply_ad_ct(&mut self.d, self.e, ad, ciphertext);
-        self.e ^= 0x40;
+        self.e ^= 0x01;
 
         let actual_tag = Self::consume_tag_and_offset(&mut k);
         if tag.ct_ne(&actual_tag).into() {
@@ -125,24 +125,24 @@ fn apply_ad_ct<D: DeckCore>(
 ) -> XofReaderCoreWrapper<D::ReaderCore> {
     if ct.is_empty() {
         // apply associated data to history
-        apply_padded(ad, e | 0x20, d)
+        apply_padded(d, ad, 0x00 | e)
     } else {
         if !ad.is_empty() {
             // apply associated data to history
-            apply_padded(ad, e | 0x20, d);
+            apply_padded(d, ad, 0x00 | e);
         }
         // apply ciphertext to history
-        apply_padded(ct, e | 0xa0, d)
+        apply_padded(d, ct, 0x02 | e)
     }
 }
 
+#[inline(always)]
 pub(crate) fn apply_padded<D: DeckCore>(
-    m: &[u8],
-    sep: u8,
     d: &mut D,
+    m: &[u8],
+    delim: u8,
 ) -> XofReaderCoreWrapper<D::ReaderCore> {
     let mut buffer = Buffer::<D>::new(&[]);
     buffer.digest_blocks(m, |b| d.update_blocks(b));
-    buffer.digest_blocks(&[sep], |b| d.update_blocks(b));
-    XofReaderCoreWrapper::from_core(d.finalize_xof_core(&mut buffer))
+    XofReaderCoreWrapper::from_core(d.finalize_deck_prepadded::<2>(&mut buffer, delim))
 }

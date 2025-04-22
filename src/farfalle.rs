@@ -6,7 +6,7 @@ use hybrid_array::Array;
 use inout::InOut;
 
 use crate::Permutation;
-use crate::deck::{DeckCore, Pad1X};
+use crate::deck::DeckCore;
 
 /// Definition of a farfalle construction.
 ///
@@ -88,25 +88,7 @@ impl<Core: FarfalleCore> ExtendableOutputCore for Farfalle<Core> {
         &mut self,
         buffer: &mut digest::core_api::Buffer<Self>,
     ) -> Self::ReaderCore {
-        let n = buffer.get_data().len();
-        if n > 0 {
-            let mut m = Array::<u8, Core::StateSize>::default();
-            m[..n].copy_from_slice(buffer.get_data());
-            buffer.reset();
-            m[n] = 0x80;
-            self.update_block(m);
-        }
-
-        Core::Rc::permute(&mut self.k);
-
-        let k = self.k.clone();
-        let mut y = self.x.clone();
-        Core::Pd::permute(&mut y);
-
-        FarfalleXofCore {
-            k,
-            y,
-        }
+        self.finalize_deck_prepadded::<0>(buffer, 0)
     }
 }
 
@@ -139,7 +121,27 @@ impl<Core: FarfalleCore> XofReaderCore for FarfalleXofCore<Core> {
 }
 
 impl<Core: FarfalleCore> DeckCore for Farfalle<Core> {
-    type Padding = Pad1X;
+    fn finalize_deck_prepadded<const B: u8>(
+        &mut self,
+        buffer: &mut digest::core_api::Buffer<Self>,
+        bits: u8,
+    ) -> Self::ReaderCore {
+        assert!(B <= 7);
+        debug_assert!(bits < (1 << B), "{bits} {B}");
+
+        // push a 1 bit
+        let delim = bits << 1 | 1;
+        let delim = delim << (7 - B);
+        buffer.digest_pad(delim, &[], |b| self.update_blocks(core::slice::from_ref(b)));
+
+        Core::Rc::permute(&mut self.k);
+
+        let k = self.k.clone();
+        let mut y = self.x.clone();
+        Core::Pd::permute(&mut y);
+
+        FarfalleXofCore { k, y }
+    }
 
     fn init(key: &[u8]) -> Self {
         assert!(key.len() < <Core::StateSize as Unsigned>::USIZE);
@@ -151,9 +153,6 @@ impl<Core: FarfalleCore> DeckCore for Farfalle<Core> {
 
         let x = Array::default();
 
-        Self {
-            k,
-            x,
-        }
+        Self { k, x }
     }
 }

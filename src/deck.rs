@@ -5,9 +5,7 @@ use cipher::{
 };
 use crypto_common::BlockSizes;
 use digest::{
-    Update, XofReader,
-    block_buffer::{BlockBuffer, BufferKind, Eager},
-    core_api::{ExtendableOutputCore, UpdateCore},
+    block_buffer::{BlockBuffer, BufferKind, Eager}, core_api::{Buffer, ExtendableOutputCore, UpdateCore}, Update, XofReader
 };
 
 pub trait Padding {
@@ -24,9 +22,9 @@ impl Delim for UTerm {
 }
 
 #[derive(Default)]
-pub struct D<U, B>(U, B);
+pub struct D<B, U>(B, U);
 
-impl<U: Delim, B: Bit> Delim for D<U, B> {
+impl<B: Bit, U: Delim> Delim for D<B, U> {
     const N: u8 = B::U8 << 7 | U::N >> 1;
 }
 
@@ -38,24 +36,26 @@ impl<N: Delim> Padding for WithTrailingZeros<N> {
     fn apply<B: BlockSizes>(self, buffer: &mut BlockBuffer<B, Self::BufferKind>) -> Array<u8, B> {
         let mut out = Array::default();
         buffer.digest_pad(N::N, &[], |b| out = b.clone());
+        buffer.reset();
         out
     }
 }
 
 impl<N: Delim> WithTrailingZeros<N> {
-    pub fn push<B: Bit>(self) -> WithTrailingZeros<D<N, B>> {
-        WithTrailingZeros(D(self.0, B::default()))
+    pub fn prefix<B: Bit>(self) -> WithTrailingZeros<D<B, N>> {
+        WithTrailingZeros(D(B::default(), self.0))
     }
 }
 
 pub type OnlyZeros = WithTrailingZeros<UTerm>;
 
 /// pad10* as defined by the farfalle paper
-pub type Pad1X = WithTrailingZeros<D<UTerm, B1>>;
+pub type Pad1X = WithTrailingZeros<D<B1, UTerm>>;
 
 /// Block-based core impl for Doubly-Extendable Cryptographic Keyed ([`Deck`]) functions.
 pub trait DeckCore: ExtendableOutputCore + UpdateCore {
-    type Padding: Padding<BufferKind = Self::BufferKind> + Default;
+    /// Retrieve XOF reader using remaining data stored in the block buffer and the lower `B` bits in delim
+    fn finalize_deck_prepadded<const B: u8>(&mut self, buffer: &mut Buffer<Self>, delim: u8) -> Self::ReaderCore;
 
     fn init(key: &[u8]) -> Self;
 }

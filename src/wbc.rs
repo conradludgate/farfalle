@@ -69,13 +69,13 @@ impl<Core: WideBlockCipherCore> WideBlockCipher<Core> {
         let b = <Core::BlockSize as Unsigned>::USIZE;
 
         let (right0, _) = right.split_at_mut(core::cmp::min(b, n - s));
-        apply_padded(&mut h.clone(), left, 0x00).xor_in2out(InOutBuf::from(right0));
+        apply_padded::<_, 1>(&mut h.clone(), left, 0b0).xor_in2out(InOutBuf::from(right0));
 
-        apply_padded(&mut g.clone(), right, 0x80).xor_in2out(InOutBuf::from(&mut *left));
-        apply_padded(&mut g, left, 0x00).xor_in2out(InOutBuf::from(&mut *right));
+        apply_padded::<_, 1>(&mut g.clone(), right, 0b1).xor_in2out(InOutBuf::from(&mut *left));
+        apply_padded::<_, 1>(&mut g, left, 0b0).xor_in2out(InOutBuf::from(&mut *right));
 
         let (left0, _) = left.split_at_mut(core::cmp::min(b, s));
-        apply_padded(&mut h, right, 0x80).xor_in2out(InOutBuf::from(left0));
+        apply_padded::<_, 1>(&mut h, right, 0b1).xor_in2out(InOutBuf::from(left0));
     }
 
     pub fn decrypt_inout(self, tweak: &[u8], buffer: InOutBuf<'_, '_, u8>) {
@@ -92,13 +92,13 @@ impl<Core: WideBlockCipherCore> WideBlockCipher<Core> {
         let b = <Core::BlockSize as Unsigned>::USIZE;
 
         let (left0, _) = left.split_at_mut(core::cmp::min(b, s));
-        apply_padded(&mut h.clone(), right, 0x80).xor_in2out(InOutBuf::from(left0));
+        apply_padded::<_, 1>(&mut h.clone(), right, 0b1).xor_in2out(InOutBuf::from(left0));
 
-        apply_padded(&mut g.clone(), left, 0x00).xor_in2out(InOutBuf::from(&mut *right));
-        apply_padded(&mut g, right, 0x80).xor_in2out(InOutBuf::from(&mut *left));
+        apply_padded::<_, 1>(&mut g.clone(), left, 0b0).xor_in2out(InOutBuf::from(&mut *right));
+        apply_padded::<_, 1>(&mut g, right, 0b1).xor_in2out(InOutBuf::from(&mut *left));
 
         let (right0, _) = right.split_at_mut(core::cmp::min(b, n - s));
-        apply_padded(&mut h, left, 0x00).xor_in2out(InOutBuf::from(right0));
+        apply_padded::<_, 1>(&mut h, left, 0b0).xor_in2out(InOutBuf::from(right0));
     }
 }
 
@@ -117,7 +117,11 @@ impl<Core: WideBlockCipherCore, T: ArraySize> WideBlockCipherAuthenticated<Core,
 }
 
 impl<Core: WideBlockCipherCore, T: ArraySize> WideBlockCipherAuthenticated<Core, T> {
-    pub fn encrypt_in_place(self, tweak: &[u8], buffer: &mut impl aead::Buffer) -> aead::Result<()> {
+    pub fn encrypt_in_place(
+        self,
+        tweak: &[u8],
+        buffer: &mut impl aead::Buffer,
+    ) -> aead::Result<()> {
         buffer.extend_from_slice(&Array::<u8, T>::default())?;
         self.inner
             .encrypt_inout(tweak, InOutBuf::from(buffer.as_mut()));

@@ -48,6 +48,7 @@ mod tests {
         Permutation, SessionAead,
         farfalle::{Farfalle, FarfalleCore},
         sane::{DeckSane, DeckSaneCore},
+        sanse::{DeckSanse, DeckSanseCore},
     };
 
     struct XoofffCore;
@@ -78,6 +79,35 @@ mod tests {
         let iv = [0; 16];
         let mut enc = XoofffSane::init(&key, &iv);
         let mut dec = XoofffSane::init(&key, &iv);
+
+        let ad1 = *b"foo";
+        let mut msg1 = *b"abcd";
+        let tag = enc.encrypt_inout_detached(&ad1, InOutBuf::from(&mut msg1[..]));
+        dec.decrypt_inout_detached(&ad1, InOutBuf::from(&mut msg1[..]), &tag)
+            .unwrap();
+        assert_eq!(msg1, *b"abcd");
+
+        let ad2 = *b"bar";
+        let mut msg2 = *b"xyzw";
+        let tag = enc.encrypt_inout_detached(&ad2, InOutBuf::from(&mut msg2[..]));
+        dec.decrypt_inout_detached(&ad2, InOutBuf::from(&mut msg2[..]), &tag)
+            .unwrap();
+        assert_eq!(msg2, *b"xyzw");
+    }
+
+    struct XoofffSanseCore;
+    impl DeckSanseCore for XoofffSanseCore {
+        type Core = XoofffDeckCore;
+        type TagSize = U16;
+    }
+
+    type XoofffSanse = DeckSanse<XoofffSanseCore>;
+
+    #[test]
+    fn check_siv() {
+        let key = [0; 32];
+        let mut enc = XoofffSanse::init(&key);
+        let mut dec = XoofffSanse::init(&key);
 
         let ad1 = *b"foo";
         let mut msg1 = *b"abcd";

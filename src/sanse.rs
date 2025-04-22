@@ -21,7 +21,7 @@ pub trait DeckSanseCore {
 pub struct DeckSanse<D: DeckSanseCore> {
     /// the history
     d: D::Core,
-    /// u1 that is stored in bit 6 (0x20)
+    /// u1 that is stored in bit 1 (0x01)
     e: u8,
 }
 
@@ -45,27 +45,26 @@ where
         buffer: InOutBuf<'_, '_, u8>,
     ) -> Array<u8, Self::Tag> {
         let e = self.e;
-        self.e ^= 0x20;
+        self.e ^= 0x01;
 
-        if buffer.is_empty() {
+        if !ad.is_empty() || buffer.is_empty() {
             // apply associated data to history
-            apply_padded(&mut self.d, ad, e).read_tag()
-        } else {
-            if !ad.is_empty() {
-                // apply associated data to history
-                apply_padded(&mut self.d, ad, e);
+            let k = apply_padded::<_, 2>(&mut self.d, ad, 0b00 | e);
+
+            if buffer.is_empty() {
+                return k.read_tag();
             }
-
-            let mut d_copy = self.d.clone();
-
-            // apply plaintext to history
-            let tag = apply_padded(&mut self.d, buffer.get_in(), e | 0x40).read_tag();
-
-            // apply tag to history for a SIV keystream and apply keystream to buffer
-            apply_padded(&mut d_copy, &tag, e | 0xc0).xor_in2out(buffer);
-
-            tag
         }
+
+        let mut d_copy = self.d.clone();
+
+        // apply plaintext to history
+        let tag = apply_padded::<_, 3>(&mut self.d, buffer.get_in(), 0b010 | e).read_tag();
+
+        // apply tag to history for a SIV keystream and apply keystream to buffer
+        apply_padded::<_, 3>(&mut d_copy, &tag, 0b110 | e).xor_in2out(buffer);
+
+        tag
     }
 
     fn decrypt_inout_detached(
@@ -75,34 +74,34 @@ where
         tag: &Array<u8, Self::Tag>,
     ) -> Result<(), Error> {
         let e = self.e;
-        self.e ^= 0x20;
+        self.e ^= 0x01;
 
-        if buffer.is_empty() {
+        if !ad.is_empty() || buffer.is_empty() {
             // apply associated data to history
-            let actual_tag = apply_padded(&mut self.d, ad, e).read_tag();
-            if ct_ne(tag, &actual_tag).into() {
-                return Err(Error);
+            let k = apply_padded::<_, 2>(&mut self.d, ad, 0b00 | e);
+
+            if buffer.is_empty() {
+                let actual_tag = k.read_tag();
+                if ct_ne(tag, &actual_tag).into() {
+                    return Err(Error);
+                }
+                return Ok(());
             }
-        } else {
-            if !ad.is_empty() {
-                // apply associated data to history
-                apply_padded(&mut self.d, ad, e);
-            }
+        }
 
-            let mut d_copy = self.d.clone();
+        let mut d_copy = self.d.clone();
 
-            // apply tag to history for a SIV keystream and apply keystream to buffer
-            let k = apply_padded(&mut d_copy, &tag, e | 0xc0);
-            let pt = k.clone().xor_in2out(buffer);
+        // apply tag to history for a SIV keystream and apply keystream to buffer
+        let k = apply_padded::<_, 3>(&mut d_copy, &tag, 0b110 | e);
+        let pt = k.clone().xor_in2out(buffer);
 
-            // apply plaintext to history
-            let actual_tag = apply_padded(&mut self.d, &pt, e | 0x40).read_tag();
+        // apply plaintext to history
+        let actual_tag = apply_padded::<_, 3>(&mut self.d, &pt, 0b010 | e).read_tag();
 
-            if ct_ne(tag, &actual_tag).into() {
-                // reapply keystream.
-                let _ct = k.xor_in2out(InOutBuf::from(pt));
-                return Err(Error);
-            }
+        if ct_ne(tag, &actual_tag).into() {
+            // reapply keystream.
+            let _ct = k.xor_in2out(InOutBuf::from(pt));
+            return Err(Error);
         }
 
         Ok(())
@@ -113,11 +112,15 @@ fn ct_ne<T: ArraySize>(a: &Array<u8, T>, b: &Array<u8, T>) -> Choice {
     a.ct_ne(b)
 }
 
-pub(crate) fn apply_padded<D: DeckCore>(d: &mut D, m: &[u8], sep: u8) -> KeyStream<D::ReaderCore> {
+#[inline(always)]
+pub(crate) fn apply_padded<D: DeckCore, const BITS: u8>(
+    d: &mut D,
+    m: &[u8],
+    b: u8,
+) -> KeyStream<D::ReaderCore> {
     let mut buffer = Buffer::<D>::new(&[]);
     buffer.digest_blocks(m, |b| d.update_blocks(b));
-    buffer.digest_blocks(&[sep], |b| d.update_blocks(b));
-    KeyStream(d.finalize_xof_core(&mut buffer))
+    KeyStream(d.finalize_deck_prepadded::<BITS>(&mut buffer, b))
 }
 
 #[derive(Clone, Default)]
